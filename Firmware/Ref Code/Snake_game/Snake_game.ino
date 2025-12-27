@@ -3,8 +3,8 @@
  * Platform     : Arduino + WS2811 / WS2812 LED Matrix
  * Author       : Prince Kumar
  * Organization : Yuvalay Makerspace
- * Version      : V 1.0.0
- * Last Updated : 25-Dec-2025
+ * Version      : V 2.0.0
+ * Last Updated : 26-Dec-2025
  *
  * Description :
  * This firmware implements a simple snake game on a 20x20 LED matrix.
@@ -34,6 +34,7 @@
  *  v1.0.0  Initial implementation
  ********************************************************************************************/
 
+
 #include <Arduino.h>
 #include <FastLED.h>
 
@@ -42,17 +43,27 @@
 #define DATA_PIN        19
 #define MATRIX_WIDTH    20
 #define MATRIX_HEIGHT   20
-#define MOVE_DELAY_MS   150   // Controls snake movement speed
+#define MOVE_DELAY_MS   150
+#define LED_BRIGHTNESS  255   // Global brightness control
+
+/******************************** GAME SPEED TUNING *********************************
+ * These values are reserved for dynamic difficulty scaling
+ * (currently not applied — retained for future enhancements)
+ ************************************************************************************/
+#define BASE_MOVE_DELAY_MS   200
+#define SPEED_STEP_MS          3
+#define MIN_MOVE_DELAY_MS    50
 
 /******************************** JOYSTICK CONFIGURATION ********************************/
 #define ANALOG_X_PIN        35
 #define ANALOG_Y_PIN        34
-#define GAME_BUTTON_PIN     13   // Start / Restart button (Active LOW)
+#define GAME_BUTTON_PIN     13   // Active LOW button
 
-#define ANALOG_X_CORRECTION 126  // Joystick center trim offset
-#define ANALOG_Y_CORRECTION 123
+// Joystick center calibration offsets
+#define ANALOG_X_CORRECTION 131
+#define ANALOG_Y_CORRECTION 126
 
-// Dead zone range to prevent joystick noise flicker
+// Dead-zone filtering range
 #define DEAD_MIN   -53
 #define DEAD_MAX    54
 
@@ -85,7 +96,7 @@ CRGB leds[NUM_LEDS];
 Snake_t snake;
 Position_t food;
 
-// Game running state
+// Game state flag (false = idle preview mode, true = game running)
 bool game_Status = false;
 
 /******************************** FUNCTION DECLARATIONS ********************************/
@@ -108,25 +119,26 @@ byte readAnalogAxisLevel(int pin);
 
 /******************************** SETUP ********************************/
 /**
- * Runs once at boot.
- * Initializes LEDs, button, snake, and places food.
+ * Runs once at startup.
+ * Initializes LEDs, button, snake, and food.
  */
 void setup()
 {
     Serial.begin(9600);
 
     FastLED.addLeds<WS2811, DATA_PIN, RGB>(leds, NUM_LEDS);
+    FastLED.setBrightness(LED_BRIGHTNESS);
     FastLED.clear();
     FastLED.show();
 
-    pinMode(GAME_BUTTON_PIN, INPUT_PULLUP); // Button = active LOW
+    pinMode(GAME_BUTTON_PIN, INPUT_PULLUP);   // Button = active LOW
 
     randomSeed(analogRead(A0));
 
     init_snake();
     spawn_food();
 
-    // Show initial preview state (idle mode)
+    // Preview mode — display snake + food
     draw_snake();
     leds[get_led_number(food)] = CRGB::Red;
     FastLED.show();
@@ -135,56 +147,49 @@ void setup()
 /******************************** MAIN LOOP ********************************/
 void loop()
 {
-    /*************** GAME WAITING MODE — PRESS BUTTON TO START ***************/
+    /*************** GAME WAIT MODE (PRESS BUTTON TO START) ***************/
     if (!game_Status)
     {
         bool cur = digitalRead(GAME_BUTTON_PIN);
 
-        // Button debounced check
-        if (cur == LOW)
+        if (cur == LOW)  // Button pressed
         {
-            delay(100);
+            delay(100);  // Debounce
             if (digitalRead(GAME_BUTTON_PIN) == LOW)
-            {
-                game_Status = true;   // Start game
-            }
+                game_Status = true;
         }
 
         Serial.println(cur);
-        return; // Stay idle until button is pressed
+        return;
     }
 
-    /*************** GAME ACTIVE MODE ***************/
-    clear_snake(); // Remove previous frame snake pixels
+    /*************** GAME RUNNING ***************/
+    clear_snake();  // Clear last frame
 
-    // Read joystick movement
     Direction_t newDir = read_joystick_direction();
     if (!is_reverse_direction(snake.direction, newDir))
-    {
         snake.direction = newDir;
-    }
 
     move_snake();
 
-    /*************** SELF COLLISION — GAME OVER ***************/
+    /*************** SELF COLLISION — GAME RESET ***************/
     if (check_self_collision())
     {
         delay(500);
 
-        // Re-initialize for restart state
         init_snake();
         spawn_food();
 
         leds[get_led_number(food)] = CRGB::Red;
         FastLED.show();
 
-        clear_Screen(); // Prevent flicker after reset
+        clear_Screen();
         draw_snake();
         FastLED.show();
 
         delay(MOVE_DELAY_MS);
 
-        game_Status = false; // Return to WAIT MODE
+        game_Status = false;  // Return to wait mode
         return;
     }
 
@@ -192,23 +197,21 @@ void loop()
     if (snake.body[0].x == food.x && snake.body[0].y == food.y)
     {
         if (snake.length < MAX_SNAKE_LEN)
-            snake.length++;   // Increase snake length
+            snake.length++;
 
-        spawn_food();         // Re-place food
+        spawn_food();
     }
 
     draw_snake();
-
-    // Draw food pixel
     leds[get_led_number(food)] = CRGB::Red;
 
     FastLED.show();
     delay(MOVE_DELAY_MS);
 }
 
-/******************************** SNAKE FUNCTIONS ********************************/
+/******************************** SNAKE LOGIC ********************************/
 /**
- * Initializes snake shape and starting direction.
+ * Sets snake initial size, direction, and position.
  */
 void init_snake(void)
 {
@@ -221,12 +224,10 @@ void init_snake(void)
 }
 
 /**
- * Moves snake by shifting all body segments forward
- * and advancing head in current direction.
+ * Moves snake by shifting body forward and advancing head.
  */
 void move_snake(void)
 {
-    // Shift all body segments forward
     for (int i = snake.length - 1; i > 0; i--)
         snake.body[i] = snake.body[i - 1];
 
@@ -240,7 +241,7 @@ void move_snake(void)
         case DIR_DOWN:  h->y++; break;
     }
 
-    // Edge wrap-around logic
+    // Wrap across matrix edges
     if (h->x < 1) h->x = MATRIX_WIDTH;
     if (h->x > MATRIX_WIDTH) h->x = 1;
     if (h->y < 1) h->y = MATRIX_HEIGHT;
@@ -248,7 +249,7 @@ void move_snake(void)
 }
 
 /**
- * Checks whether the snake head hits its own body.
+ * Detects whether head collides with body.
  */
 bool check_self_collision(void)
 {
@@ -256,15 +257,13 @@ bool check_self_collision(void)
     {
         if (snake.body[0].x == snake.body[i].x &&
             snake.body[0].y == snake.body[i].y)
-        {
             return true;
-        }
     }
     return false;
 }
 
 /**
- * Draws all snake body segments in green.
+ * Draws snake segments in green.
  */
 void draw_snake(void)
 {
@@ -273,7 +272,7 @@ void draw_snake(void)
 }
 
 /**
- * Clears snake pixels from last frame.
+ * Clears the snake trail from previous frame.
  */
 void clear_snake(void)
 {
@@ -281,9 +280,9 @@ void clear_snake(void)
         leds[get_led_number(snake.body[i])] = CRGB::Black;
 }
 
-/******************************** FOOD FUNCTIONS ********************************/
+/******************************** FOOD LOGIC ********************************/
 /**
- * Generates a food position that does NOT overlap snake.
+ * Generates a new food location avoiding snake body.
  */
 void spawn_food(void)
 {
@@ -296,7 +295,7 @@ void spawn_food(void)
 }
 
 /**
- * Returns true if a position lies on the snake body.
+ * Returns true if food is on snake body.
  */
 bool is_food_on_snake(Position_t p)
 {
@@ -308,18 +307,22 @@ bool is_food_on_snake(Position_t p)
     return false;
 }
 
-/******************************** JOYSTICK PROCESSING ********************************/
+/******************************** JOYSTICK HANDLING ********************************/
 /**
- * Converts joystick analog readings into direction control.
- * Dead-zone prevents noise and micro-movements.
+ * Converts joystick input to movement direction.
+ * ESP32 ADC range is 0–4095, mapped to 0–255.
  */
 Direction_t read_joystick_direction(void)
 {
     short x = readAnalogAxisLevel(ANALOG_X_PIN) - ANALOG_X_CORRECTION;
     short y = readAnalogAxisLevel(ANALOG_Y_PIN) - ANALOG_Y_CORRECTION;
 
-    if (x < DEAD_MIN && y > DEAD_MIN && y < DEAD_MAX) return DIR_UP;
-    if (x > DEAD_MAX && y > DEAD_MIN && y < DEAD_MAX) return DIR_DOWN;
+    Serial.print("X: "); Serial.println(x);
+    Serial.print("Y: "); Serial.println(y);
+
+    // Note: Direction mapping flipped for physical joystick orientation
+    if (x < DEAD_MIN && y > DEAD_MIN && y < DEAD_MAX) return DIR_DOWN;
+    if (x > DEAD_MAX && y > DEAD_MIN && y < DEAD_MAX) return DIR_UP;
 
     if (y < DEAD_MIN && x > DEAD_MIN && x < DEAD_MAX) return DIR_RIGHT;
     if (y > DEAD_MAX && x > DEAD_MIN && x < DEAD_MAX) return DIR_LEFT;
@@ -328,7 +331,7 @@ Direction_t read_joystick_direction(void)
 }
 
 /**
- * Prevents instant reverse direction to avoid self crash.
+ * Prevents instant opposite direction reversal.
  */
 bool is_reverse_direction(Direction_t c, Direction_t n)
 {
@@ -340,8 +343,8 @@ bool is_reverse_direction(Direction_t c, Direction_t n)
 
 /******************************** LED MAPPING ********************************/
 /**
- * Converts (x,y) matrix coordinates to LED index
- * supports serpentine wiring layout.
+ * Converts (x,y) position to LED index
+ * Supports serpentine matrix wiring.
  */
 uint16_t get_led_number(Position_t pos)
 {
@@ -356,16 +359,17 @@ uint16_t get_led_number(Position_t pos)
 
 /******************************** ANALOG UTILITIES ********************************/
 /**
- * Reads joystick analog value and scales to 0-255.
+ * ESP32 ADC is 12-bit (0–4095)
+ * Scaled down to 0–255 for joystick processing.
  */
 byte readAnalogAxisLevel(int pin)
 {
-    return map(analogRead(pin), 0, 1023, 0, 255);
+    return map(analogRead(pin), 0, 4095, 0, 255);
 }
 
 /**
  * Clears entire LED matrix.
- * Helps avoid flicker during restart.
+ * Used during reset to prevent flicker ghosting.
  */
 void clear_Screen(void)
 {
