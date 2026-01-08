@@ -4,7 +4,7 @@
  * Platform     : ESP32 + WS2811 / WS2812 LED Matrix
  * Author       : Prince Sharma
  * Organization : Yuvalay Makerspace
- * Firmware Version : v3.0.0
+ * Firmware Version : v3.0.1
  * Last Updated : 28-Dec-2025
  *
  * Description :
@@ -70,7 +70,8 @@
 #define MATRIX_WIDTH    20
 #define MATRIX_HEIGHT   20
 #define LED_BRIGHTNESS  255
-
+#define BUZZER_PIN      22
+#define BUZZER_DELAY    500
 /******************************** SPEED CONTROL ********************************/
 #define BASE_MOVE_DELAY_MS  200   // Initial movement delay
 #define SPEED_STEP_MS         3   // Speed increase per snake segment
@@ -86,7 +87,7 @@
 /******************************** JOYSTICK INPUT ********************************/
 #define ANALOG_X_PIN 35
 #define ANALOG_Y_PIN 34
-#define GAME_BUTTON_PIN 13
+#define GAME_BUTTON_PIN 27 // changed from 13
 
 // Calibration offsets — joystick resting position
 #define ANALOG_X_CORRECTION 131
@@ -172,6 +173,9 @@ void InputTask(void *pv) {
     if (!game_Status && digitalRead(GAME_BUTTON_PIN) == LOW) {
       vTaskDelay(pdMS_TO_TICKS(50));   // debounce
       if (digitalRead(GAME_BUTTON_PIN) == LOW)
+        digitalWrite(BUZZER_PIN,HIGH);
+        vTaskDelay(pdMS_TO_TICKS(BUZZER_DELAY));
+        digitalWrite(BUZZER_PIN,LOW);
         game_Status = true;
     }
 
@@ -311,7 +315,7 @@ void setup() {
   FastLED.clear();
 
   pinMode(GAME_BUTTON_PIN, INPUT_PULLUP);
-
+  pinMode(BUZZER_PIN,OUTPUT);
   randomSeed(esp_random());
 
   init_snake();
